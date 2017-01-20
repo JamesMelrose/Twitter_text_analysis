@@ -1,0 +1,250 @@
+\documentclass[a4paper]{article}
+
+\usepackage[lmargin=1in,rmargin=1in,tmargin=1in,bmargin=1in]{geometry}
+
+\begin{document}
+
+\title{Naiive Bayes}
+\author{Andrew James Melrose}
+\maketitle
+
+\section*{1. \emph{NB Function}}
+
+<<eval=TRUE,echo=TRUE>>=
+library(plyr)
+
+data <- read.csv("~/Tennis.csv")
+
+NB <- function(formula,data,query){
+  if(is.formula(formula)){
+    if(is.data.frame(data)){
+      if(is.vector(query)){
+        m <- match.call(expand.dots = FALSE)
+        m[[1]] <- as.name("model.frame")
+        m <- m[-4]
+        m <- eval(m, parent.frame())
+        Terms <- attr(m, "terms")
+        if (any(attr(Terms, "order") > 1))
+          stop("NB cannot handle interaction terms")
+        Y <- model.extract(m, "response")
+        X <- m[, -attr(Terms, "response"), drop = FALSE]
+        ##testing
+        X[] <- lapply(X, factor)
+        if(ncol(X) == length(query)){
+           allT <- c()
+           for(i in 1:length(query)){allT<-c(allT, query[i]%in%X[,i])==TRUE}
+           if(all(allT) == TRUE){
+             NB_output1 <- vector(mode = "list", length=ncol(X))
+             all <- nrow(m)
+             for(i in 1:ncol(X)){
+               tmp <- table(X[[i]],Y)
+               tmp[,1] <- tmp[,1]/sum(tmp[,1])
+               tmp[,2] <- tmp[,2]/sum(tmp[,2])
+               NB_output1[[i]] <- tmp
+               names(NB_output1)[i] <- colnames(X)[i]
+             }
+             NB_output2 <- vector(mode="list", length=length(levels(Y)))
+             names(NB_output2) <- levels(Y)
+             Ps <- colnames(X)
+             DVs <- table(Y)
+             for(o in names(DVs)){
+               tmp_prob <- DVs[[o]]/all
+               for(i in 1:ncol(X)){
+                 tempo1 <- Ps[i]
+                 new <- query[i]
+                 #dont do calculation if 0 is introduced to avoid bottoming out function
+                 if(NB_output1[[tempo1]][,o][[new]] != 0){
+                   tmp_prob <- tmp_prob * NB_output1[[tempo1]][,o][[new]]
+                 }
+               }
+            NB_output2[[o]] <- tmp_prob
+            }
+            winner <- NB_output2[which.max(NB_output2)]
+            output <- c(names(winner),winner[[1]])    
+            return(output)
+          }
+          else{
+            cat("Error in NB(formula, data, query):\nQuery :) does not match the model")
+          }
+        }
+        else{
+           cat("Error in NB(formula, data, query):\nQuery does not match the model")
+        }
+      }
+      else{
+        cat("Error in NB(formula,data,query):\nQuery needs to be a vector")
+      }
+    }
+    else{
+      cat("Error in NB(formula,data,query):\nNB can only handle dataframes\n")
+    }
+  }
+  else{
+    cat("Error in NB(formula,data,query):\nformula is not a proper formula\n")
+  } 
+}
+
+formula <- Play ~ Outlook + Temperature + Humidity + Wind
+query <- c("Sunny","Cool","High","Strong")
+NB(formula,data,query)
+
+query <- c("Sunny", "Cool", "Normal", "Weak")
+NB(formula, data, query)
+
+query <- c("Hot", "Cool", "Normal", "Weak")
+NB(formula, data, query)
+
+query <- c("Hot", "Cool", "Normal")
+NB(formula, data, query)
+
+query <- c("Sunny", "Cool", "Normal", "Weak")
+NB(formula, c("1", "2"), query)
+
+query <- data[data$Outlook == "Sunny", ]
+NB(formula, data, query)
+@
+
+Test this function with another dataset, and also a bonus dataset predicting Kobe Bryant's shots taken from Kaggle. 
+
+<<eval=TRUE,echo=TRUE>>=
+kobe <- read.csv("~/Kaggle/Kobe/data.csv")
+kobe <- subset(kobe, !is.na(shot_made_flag))
+formula = shot_made_flag ~ combined_shot_type + shot_zone_basic + season + opponent
+query <- c("Jump Shot","Mid-Range","2001-02","SAC")
+NB(formula,kobe,query)
+query <- c("Jump Shot","Mid-Range","2001-02","BOS")
+NB(formula,kobe,query)
+query <- c("Dunk","Restricted Area","2010-11","GSW")
+NB(formula,kobe,query)
+
+houseData <- read.csv("~/house-votes-84.data",na.strings="?")
+colnames(houseData) <- c("party",       "handicapped-infants",
+                    "water-project-cost-sharing",
+                    "adoption-of-the-budget-resolution",
+                    "physician-fee-freeze",
+                    "el-salvador-aid",
+                    "religious-groups-in-schools",
+                    "anti-satellite-test-ban",
+                    "aid-to-nicaraguan-contras",
+                    "mx-missile",
+                    "immigration",
+                    "synfuels-corporation-cutback",
+                    "education-spending",
+                    "superfund-right-to-sue",
+                    "crime",    "duty-free-exports",
+                    "export-administration-act-south-africa")
+mydata <- houseData[complete.cases(houseData),]
+formula <- party ~ .
+query <- c(as.vector(t(mydata[2,-1])))
+NB(formula,mydata[-2,],query)
+@
+
+\section*{2. \emph{Leave-One-Out Cross Validation}}
+
+Perform the Leave one out cross validation.
+
+<<eval=TRUE,echo=TRUE>>=
+LOOCV <- function(formula,data){
+  if(is.formula(formula)){
+    m <- match.call(expand.dots = FALSE)
+    m[[1]] <- as.name("model.frame")
+    m <- m[-4]
+    m <- eval(m, parent.frame())
+    Terms <- attr(m, "terms")
+    if (any(attr(Terms, "order") > 1))
+      stop("LOOCV cannot handle interaction terms")
+    resp <- model.extract(m, "response")
+    frame <- m[, -attr(Terms, "response"), drop = FALSE]
+    frame[] <- lapply(frame, factor)
+    error_matrix <- matrix(nrow=nrow(frame),ncol=2)
+    for(i in 1:nrow(data)){
+      data2 <- data[-i,]
+      query <- c()
+      for(z in 1:length(frame[1,])){query <- c(query,as.character(frame[i,z]))}
+      outs <- NB(formula,data2,query)
+      error_matrix[i,] <- outs
+    } 
+    cm = as.matrix(table(Actual = resp, Predicted = error_matrix[,1]))
+    n = sum(cm)
+    diag = diag(cm)
+    accuracy = sum(diag) / n
+    return(accuracy)
+  }
+}
+
+data <- read.csv("~/Tennis.csv")
+
+formula <- Play ~ Outlook + Temperature + Humidity + Wind
+LOOCV(formula,data)
+
+formula <- Outlook ~ Temperature + Humidity + Wind + Play
+LOOCV(formula,data)
+
+kobe2 <- kobe[1:5000,]
+formula = shot_made_flag ~ combined_shot_type + shot_zone_basic + season + opponent
+LOOCV(formula,kobe2)
+
+formula <- party ~ .
+LOOCV(formula,mydata)
+@
+
+\section*{3. \emph{Sentiment Analysis}}
+
+<<eval=TRUE,echo=TRUE>>=
+load("~/sentiment")
+data <- r[,c("sentiment","text")]
+sentiment <- function(data){
+  library(tm)
+  library(SnowballC)
+  formula <- sentiment ~ .
+  twitts <- VCorpus(VectorSource(data$text))
+  #convert to lowercase
+  docs <- tm_map(twitts, content_transformer(tolower))
+  #remove URLs
+  removeURL <- function(x) gsub("http[^[:space:]]*", "", x)
+  docs <- tm_map(docs, content_transformer(removeURL))
+  #remove anything other than English letters or space
+  removeNumPunct <- function(x) gsub("[^[:alpha:][:space:]]*", "", x)
+  docs <- tm_map(docs, content_transformer(removeNumPunct))
+  #remove stopwords (remove the common words that are probably meaningless)
+  docs <- tm_map(docs, removeWords, stopwords("english")) 
+  #remove whitespace
+  docs <- tm_map(docs, content_transformer(stripWhitespace))
+  docsCopy <- docs
+  #turn on stemming (tries to combine words that are close or misspelled)
+  docs <- tm_map(docs, stemDocument)
+  dtm <- TermDocumentMatrix(docs)
+  frq <- weightBin(dtm)
+  freq <- findFreqTerms(frq,lowfreq=2)
+  freq <- as.vector(freq)
+  df1 <- data.frame(t(as.matrix(frq)))
+  df2 <- cbind(data,df1)
+  df3 <- df2[,-2]
+  df4 <- df3[,c(1,which(names(df3)%in%freq))]
+  out <- LOOCV(formula,df4)
+  return(out)
+}
+#sentiment(data)
+
+DT <- as.data.frame(
+  lapply(subset(r, candidate=="Donald Trump"),
+  function(x) if(is.factor(x)) factor(x) else x
+  )
+)
+data <- subset(DT,select=c("sentiment","text"))
+sentiment(data)
+  
+JK <- as.data.frame(
+  lapply(subset(r, candidate=="John Kasich"),
+  function(x) if(is.factor(x)) factor(x) else x
+  )
+)
+data <- subset(JK,select=c("sentiment","text"))
+sentiment(data)
+@
+
+
+
+\end{document}
+
+
