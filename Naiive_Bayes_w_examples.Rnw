@@ -107,7 +107,7 @@ NB(formula, data, query)
 Test this function with another dataset, and also a bonus dataset predicting Kobe Bryant's shots taken from Kaggle. 
 
 <<eval=TRUE,echo=TRUE>>=
-kobe <- read.csv("~/Kaggle/Kobe/data.csv")
+kobe <- read.csv("~/Kaggle/Kobe/Kobe_data.csv")
 kobe <- subset(kobe, !is.na(shot_made_flag))
 formula = shot_made_flag ~ combined_shot_type + shot_zone_basic + season + opponent
 query <- c("Jump Shot","Mid-Range","2001-02","SAC")
